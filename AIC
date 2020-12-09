@@ -1,0 +1,153 @@
+import numpy as np
+import pandas as pd
+import pandas_datareader.data as web
+import matplotlib.pyplot as plt
+import math
+import scipy.optimize as sco 
+import scipy.interpolate as sci
+
+#list of stocks in portfolio
+
+stocks = ['VOO', 'AAPL', 'GLD']
+
+#download daily price data for each of the stocks in the portfolio
+data = web.get_data_yahoo(stocks,
+   start = "2014-06-22",
+    end = "2020-01-08") ['Adj Close']
+
+
+columns = 'Adj Close'
+noa = len(stocks)
+rets = np.log(data / data.shift(1))
+rets.hist(bins=40, figsize=(10, 8));
+
+rets.mean() * 252
+rets.cov() * 252
+weights = np.random.random(noa)
+weights /= np.sum(weights)
+
+np.sum(rets.mean() * weights) * 252 
+np.dot(weights.T, np.dot(rets.cov() * 252, weights))
+math.sqrt(np.dot(weights.T, np.dot(rets.cov() * 252, weights)))
+
+def port_ret(weights):
+    return np.sum(rets.mean() * weights) * 252 
+
+def port_vol(weights):
+    return np.sqrt(np.dot(weights.T, np.dot(rets.cov() * 252, weights)))
+
+prets = []
+pvols = []
+for p in range (25000):
+    weights = np.random.random(noa)
+    weights /= np.sum(weights)
+    prets.append(port_ret(weights))
+    pvols.append(port_vol(weights))
+prets = np.array(prets) 
+pvols = np.array(pvols)
+
+plt.figure(figsize=(10, 6))
+plt.scatter(pvols, prets, c=prets / pvols, 
+            marker='o', cmap='coolwarm')
+plt.xlabel('Expected Volatility')
+plt.ylabel('Expected Return')
+plt.colorbar(label='Sharpe Ratio');
+
+def min_func_sharpe(weights):
+    return -port_ret(weights) / port_vol(weights) 
+
+cons = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+bnds = tuple((0, 1) for x in range(noa))
+
+eweights = np.array(noa * [1. / noa,])
+
+min_func_sharpe(eweights)
+ 
+
+opts = sco.minimize(min_func_sharpe, eweights, 
+                    method='SLSQP', bounds=bnds,
+                    constraints=cons)
+opts['x'].round(3)
+port_ret(opts['x']).round(3)
+port_vol(opts['x']).round(3)
+port_ret(opts['x']) / port_vol(opts['x'])
+
+optv = sco.minimize(port_vol, eweights, 
+                    method='SLSQP', bounds=bnds, 
+                    constraints=cons)
+optv['x'].round(3)
+port_vol(optv['x']).round(3)
+port_ret(optv['x']).round(3)
+port_ret(optv['x']) / port_vol(optv['x'])
+
+cons = ({'type': 'eq', 'fun': lambda x: port_ret(x) - tret},
+        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+bnds = tuple((0.0, 1) for x in weights)
+
+
+
+
+trets = np.linspace(0.05, 0.2, 50)
+tvols = []
+for tret in trets: 
+    res = sco.minimize(port_vol, eweights, method='SLSQP',
+                       bounds=bnds, constraints=cons)
+    tvols.append(res['fun'])
+tvols = np.array(tvols)
+
+plt.figure(figsize=(10, 6))
+plt.scatter(pvols, prets, c=prets / pvols, 
+            marker='.', alpha = 0.8, cmap = 'coolwarm')
+plt.plot(tvols, trets, 'b', lw=4.0)
+plt.plot(port_vol(opts['x']), port_ret(opts['x']), 
+         'y*', markersize=15.0)
+plt.xlabel('Expected Volatility')
+plt.ylabel('Expected Return')
+plt.colorbar(label='Sharpe Ratio')
+
+ind = np.argmin(tvols)
+evols = tvols[ind:]
+erets = trets[ind:]
+
+tck = sci.splrep(evols, erets)
+
+def f(x):
+    
+    return sci.splev(x, tck, der=0)
+def df(x):
+    
+    return sci.splev(x, tck, der=1)
+
+def equations(p, rf=0.01):
+    eq1 = rf - p[0]
+    eq2 = rf + p[1] * p[2] - f(p[2])
+    eq3 = p[1] - df(p[2])
+    return eq1, eq2, eq3 
+
+opt = sco.fsolve(equations, [0.01, 0.5, 0.15])
+
+np.round(equations(opt), 6)
+
+plt.figure(figsize=(10, 6))
+plt.scatter(pvols, prets, c=(prets - 0.01) / pvols, 
+            marker='.', cmap='coolwarm')
+plt.plot(evols, erets, 'b', lw=4.0)
+cx = np.linspace(0.0, 0.3)
+plt.plot(cx, opt[0] + opt[1] * cx, 'r', lw=1.5)
+plt.plot(opt[2], f(opt[2]), 'y*', markersize=15.0)
+plt.grid(True)
+plt.axhline(0, color='k', ls='--', lw=2.0)
+plt.axvline(0, color='k', ls='--', lw=2.0)
+plt.xlabel('Expected Volatility')
+plt.ylabel('Expected Return')
+plt.colorbar(label='Sharpe Ratio')
+plt.title('AIC Portfolio Optimizer')
+
+cons = ({'type': 'eq', 'fun': lambda x: port_ret(x) - f(opt[2])},
+        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+res = sco.minimize(port_vol, eweights, method='SLSQP',
+                   bounds=bnds, constraints=cons)
+print(res['x'].round(3))
+print(port_ret(res['x']))
+print(port_vol(res['x']))
+print(port_ret(res['x']) / port_vol(res['x']))
